@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreeHV · sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0a0c0f;--panel:#111519;--line:#222a32;--ink:#d7dde3;
+    --ink-faint:#5b646d;--amber:#ffb627;--amber-dim:#a8761a;--red:#ff5d5d;
+    --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;}
+  *{box-sizing:border-box}
+  body{margin:0;height:100vh;background:var(--bg);color:var(--ink);
+    font-family:var(--mono);display:flex;align-items:center;justify-content:center;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:44px 44px;background-position:-1px -1px;}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at 50% 0%,rgba(255,182,39,.07),transparent 55%);}
+  .box{width:340px;max-width:90vw;background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:30px 28px;box-shadow:0 24px 60px rgba(0,0,0,.5);position:relative}
+  .logo{font-size:22px;font-weight:600;letter-spacing:.5px;margin-bottom:4px}
+  .logo b{color:var(--amber)}
+  .tag{color:var(--ink-faint);font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:26px}
+  label{display:block;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;
+    color:var(--ink-faint);margin-bottom:7px}
+  input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:4px;
+    color:var(--ink);font-family:var(--mono);font-size:14px;padding:11px 13px}
+  input:focus{outline:none;border-color:var(--amber-dim)}
+  button{width:100%;margin-top:18px;font-family:var(--mono);font-size:13px;font-weight:600;
+    cursor:pointer;border:1px solid var(--amber);background:var(--amber);color:#1a1205;
+    padding:11px;border-radius:5px}
+  button:hover{background:#ffc44d}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .msg{color:var(--red);font-size:12px;margin-top:14px;min-height:16px;text-align:center}
+</style>
+</head>
+<body>
+  <div class="box">
+    <div class="logo"><b>Free</b>HV</div>
+    <div class="tag">// control console</div>
+    <label for="pw">Admin password</label>
+    <input id="pw" type="password" autofocus autocomplete="current-password">
+    <button id="go" onclick="signIn()">Sign in</button>
+    <div class="msg" id="msg"></div>
+  </div>
+<script>
+  const pw = document.getElementById('pw');
+  const msg = document.getElementById('msg');
+  const go = document.getElementById('go');
+  async function signIn(){
+    go.disabled = true; msg.textContent = '';
+    try{
+      const r = await fetch('/api/login', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({password: pw.value})});
+      const d = await r.json().catch(()=>({}));
+      if(r.ok){ location.href = '/'; return; }
+      msg.textContent = d.error || 'Sign in failed.';
+    }catch(e){ msg.textContent = 'Could not reach the daemon.'; }
+    go.disabled = false; pw.select();
+  }
+  pw.addEventListener('keydown', e=>{ if(e.key==='Enter') signIn(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# Core daemon
+Flask>=3.0
+flask-sock>=0.7        # WebSocket support for the in-browser VNC console
+
+# Real KVM backend (install on the hypervisor host; not needed for mock/dev).
+# On Debian/Ubuntu the binding is best installed via the distro package
+# 'python3-libvirt' alongside libvirt-daemon-system and qemu-kvm:
+#   sudo apt install qemu-kvm libvirt-daemon-system python3-libvirt
+# It is listed here for reference / pip-based hosts:
+# libvirt-python>=9.0

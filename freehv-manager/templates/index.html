@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreeHV · console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0c0f; --panel:#111519; --panel-2:#161b21; --line:#222a32;
+    --ink:#d7dde3; --ink-dim:#8a949e; --ink-faint:#5b646d;
+    --amber:#ffb627; --amber-dim:#a8761a;
+    --green:#3ad07a; --red:#ff5d5d; --blue:#5db0ff;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:14px;line-height:1.5;
+    background-image:
+      linear-gradient(var(--line) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:44px 44px;background-position:-1px -1px;
+  }
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at 50% -10%,rgba(255,182,39,.06),transparent 60%);}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+
+  header{border-bottom:1px solid var(--line);background:rgba(10,12,15,.85);
+    backdrop-filter:blur(6px);position:sticky;top:0;z-index:10}
+  .topbar{display:flex;align-items:center;gap:16px;padding:16px 20px;max-width:1080px;margin:0 auto}
+  .logo{font-family:var(--mono);font-weight:600;font-size:18px;letter-spacing:.5px}
+  .logo b{color:var(--amber)}
+  .logo .v{color:var(--ink-faint);font-size:12px;margin-left:4px}
+  .spacer{flex:1}
+  .mode{font-family:var(--mono);font-size:11px;text-transform:uppercase;
+    letter-spacing:1px;padding:4px 9px;border:1px solid var(--line);border-radius:3px}
+  .mode.kvm{color:var(--green);border-color:#1c3a29}
+  .mode.mock{color:var(--amber);border-color:#3a2f15}
+  .acct-btn{font-family:var(--mono);font-size:14px;cursor:pointer;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--ink-dim);padding:5px 10px;border-radius:4px;line-height:1}
+  .acct-btn:hover{border-color:var(--ink-faint);color:var(--ink)}
+
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:6px;overflow:hidden;margin:22px 0}
+  .stat{background:var(--panel);padding:14px 16px}
+  .stat .k{font-family:var(--mono);font-size:10px;letter-spacing:1.5px;
+    text-transform:uppercase;color:var(--ink-faint)}
+  .stat .val{font-family:var(--mono);font-size:22px;margin-top:6px}
+  .stat .val small{font-size:12px;color:var(--ink-dim)}
+
+  .bar{display:flex;align-items:center;margin:26px 0 12px}
+  .bar h2{font-family:var(--mono);font-size:13px;letter-spacing:2px;text-transform:uppercase;
+    color:var(--ink-dim);margin:0;font-weight:500}
+  .bar .spacer{flex:1}
+
+  button{font-family:var(--mono);font-size:12px;cursor:pointer;border-radius:4px;
+    border:1px solid var(--line);background:var(--panel-2);color:var(--ink);
+    padding:8px 14px;transition:.12s}
+  button:hover{border-color:var(--ink-faint)}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  .btn-primary{background:var(--amber);color:#1a1205;border-color:var(--amber);font-weight:600}
+  .btn-primary:hover{background:#ffc44d;border-color:#ffc44d}
+  .btn-sm{padding:5px 10px;font-size:11px}
+  .btn-green{color:var(--green)} .btn-green:hover{border-color:var(--green)}
+  .btn-red{color:var(--red)} .btn-red:hover{border-color:var(--red)}
+  .btn-blue{color:var(--blue)} .btn-blue:hover{border-color:var(--blue)}
+
+  table{width:100%;border-collapse:collapse;background:var(--panel);
+    border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  th{font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;
+    color:var(--ink-faint);text-align:left;padding:11px 16px;border-bottom:1px solid var(--line);font-weight:500}
+  td{padding:13px 16px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:13px}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:var(--panel-2)}
+  .name{color:var(--ink);font-weight:500}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:8px;vertical-align:middle}
+  .running .dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .stopped .dot{background:var(--ink-faint)}
+  .paused .dot{background:var(--amber)}
+  .state{text-transform:capitalize}
+  .actions{text-align:right;white-space:nowrap}
+  .actions button{margin-left:6px}
+  .empty{padding:40px 16px;text-align:center;color:var(--ink-faint);font-family:var(--mono);font-size:12px}
+
+  .panels{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:30px}
+  @media(max-width:720px){.panels{grid-template-columns:1fr}}
+  .panel .bar{margin:0 0 12px}
+  .cards{display:flex;flex-direction:column;gap:10px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:13px 15px}
+  .card .head{display:flex;align-items:center;justify-content:space-between;font-family:var(--mono);font-size:13px}
+  .card .sub{font-family:var(--mono);font-size:11px;color:var(--ink-faint);margin-top:3px}
+  .card .tag{font-family:var(--mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;
+    padding:2px 7px;border:1px solid var(--line);border-radius:3px;color:var(--ink-dim)}
+  .card .tag.on{color:var(--green);border-color:#1c3a29}
+  .card .tag.off{color:var(--ink-faint)}
+  .meter{height:5px;background:var(--bg);border-radius:3px;margin-top:10px;overflow:hidden}
+  .meter span{display:block;height:100%;background:linear-gradient(90deg,var(--amber-dim),var(--amber))}
+
+  /* modal */
+  .overlay{position:fixed;inset:0;background:rgba(5,6,8,.72);backdrop-filter:blur(3px);
+    display:none;align-items:center;justify-content:center;z-index:50}
+  .overlay.show{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    width:420px;max-width:92vw;padding:24px;box-shadow:0 24px 60px rgba(0,0,0,.6)}
+  .modal h3{font-family:var(--mono);margin:0 0 18px;font-size:14px;letter-spacing:1px;text-transform:uppercase}
+  .modal h3 b{color:var(--amber)}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:1.5px;
+    text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px}
+  .field input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:4px;
+    color:var(--ink);font-family:var(--mono);font-size:13px;padding:9px 11px}
+  .field input:focus{outline:none;border-color:var(--amber-dim)}
+  .field select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:4px;
+    color:var(--ink);font-family:var(--mono);font-size:13px;padding:9px 11px;cursor:pointer}
+  .field select:focus{outline:none;border-color:var(--amber-dim)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:22px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    background:var(--panel-2);border:1px solid var(--line);border-left:3px solid var(--amber);
+    padding:11px 18px;border-radius:5px;font-family:var(--mono);font-size:12px;
+    opacity:0;transition:.25s;pointer-events:none;z-index:60}
+  .toast.show{opacity:1}
+  .toast.err{border-left-color:var(--red);color:var(--red)}
+  footer{color:var(--ink-faint);font-family:var(--mono);font-size:11px;
+    text-align:center;padding:30px 0 40px}
+</style>
+</head>
+<body>
+<header>
+  <div class="topbar">
+    <div class="logo"><b>Free</b>HV<span class="v">// console</span></div>
+    <div class="spacer"></div>
+    <div id="mode" class="mode">…</div>
+    <button class="acct-btn" onclick="openPwModal()" title="Change password">⚙</button>
+    <button class="acct-btn" onclick="logout()" title="Sign out">⏻</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="stats" id="stats"></div>
+
+  <div class="bar">
+    <h2>Virtual Machines</h2>
+    <div class="spacer"></div>
+    <button class="btn-primary" onclick="openModal()">+ New VM</button>
+  </div>
+
+  <table>
+    <thead><tr>
+      <th>Name</th><th>State</th><th>vCPU</th><th>Memory</th><th>Disk</th>
+      <th class="actions">Actions</th>
+    </tr></thead>
+    <tbody id="vms"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
+  </table>
+
+  <div class="panels">
+    <div class="panel">
+      <div class="bar"><h2>Storage</h2></div>
+      <div id="pools" class="cards"></div>
+    </div>
+    <div class="panel">
+      <div class="bar"><h2>Networks</h2></div>
+      <div id="nets" class="cards"></div>
+    </div>
+  </div>
+
+  <footer>FreeHV · open-source KVM management</footer>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h3>Create <b>VM</b></h3>
+    <div class="field"><label>Name</label><input id="f-name" placeholder="ubuntu-server"></div>
+    <div class="row2">
+      <div class="field"><label>Memory (MB)</label><input id="f-mem" type="number" value="2048"></div>
+      <div class="field"><label>vCPUs</label><input id="f-cpu" type="number" value="2"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Disk (GB)</label><input id="f-disk" type="number" value="20"></div>
+      <div class="field"><label>Install ISO</label><select id="f-iso"><option value="">— none (boot from disk) —</option></select></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Storage pool</label><select id="f-pool"></select></div>
+      <div class="field"><label>Network</label><select id="f-net"></select></div>
+    </div>
+    <div class="modal-actions">
+      <button onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" id="create-btn" onclick="createVM()">Create</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="pw-overlay">
+  <div class="modal">
+    <h3>Change <b>password</b></h3>
+    <div class="field"><label>Current password</label><input id="pw-cur" type="password"></div>
+    <div class="field"><label>New password (min 8 chars)</label><input id="pw-new" type="password"></div>
+    <div class="field"><label>Confirm new password</label><input id="pw-new2" type="password"></div>
+    <div class="modal-actions">
+      <button onclick="closePwModal()">Cancel</button>
+      <button class="btn-primary" id="pw-btn" onclick="changePassword()">Update</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+async function api(path, opts={}){
+  const r = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opts});
+  if(r.status===401){ location.href='/login'; throw new Error('session expired'); }
+  const data = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  return data;
+}
+
+function toast(msg, isErr=false){
+  const t = $('#toast'); t.textContent = msg;
+  t.className = 'toast show' + (isErr?' err':'');
+  setTimeout(()=>t.className='toast'+(isErr?' err':''), 2600);
+}
+
+function fmtMem(mb){ return mb>=1024 ? (mb/1024).toFixed(mb%1024?1:0)+' GB' : mb+' MB'; }
+
+async function refresh(){
+  try{
+    const host = await api('/api/host');
+    const m = $('#mode');
+    m.textContent = host.mode==='kvm' ? '● KVM live' : '● mock mode';
+    m.className = 'mode ' + host.mode;
+    $('#stats').innerHTML = `
+      <div class="stat"><div class="k">Hypervisor</div><div class="val" style="font-size:13px">${host.hypervisor}</div></div>
+      <div class="stat"><div class="k">Host CPUs</div><div class="val">${host.cpus}</div></div>
+      <div class="stat"><div class="k">Memory free</div><div class="val">${(host.memory_free_mb/1024).toFixed(1)}<small> / ${(host.memory_mb/1024).toFixed(0)} GB</small></div></div>
+      <div class="stat"><div class="k">VMs defined</div><div class="val">${host.vm_count}</div></div>`;
+
+    const vms = await api('/api/vms');
+    const tb = $('#vms');
+    if(!vms.length){ tb.innerHTML = '<tr><td colspan="6" class="empty">no virtual machines — create one to begin</td></tr>'; return; }
+    tb.innerHTML = vms.map(v=>{
+      const run = v.state==='running';
+      return `<tr class="${v.state}">
+        <td class="name">${v.name}</td>
+        <td class="state"><span class="dot"></span>${v.state}</td>
+        <td>${v.vcpus}</td>
+        <td>${fmtMem(v.memory_mb)}</td>
+        <td>${v.disk_gb? v.disk_gb+' GB':'—'}</td>
+        <td class="actions">
+          ${run
+            ? `<button class="btn-sm btn-blue" onclick="window.open('/console/${v.name}','_blank')">Console</button>
+               <button class="btn-sm" onclick="act('${v.name}','shutdown')">Shutdown</button>
+               <button class="btn-sm btn-red" onclick="act('${v.name}','force-off')">Force off</button>`
+            : `<button class="btn-sm btn-green" onclick="act('${v.name}','start')">Start</button>
+               <button class="btn-sm btn-red" onclick="del('${v.name}')">Delete</button>`}
+        </td></tr>`;
+    }).join('');
+
+    // storage pools
+    const pools = await api('/api/pools');
+    $('#pools').innerHTML = pools.length ? pools.map(p=>{
+      const used = Math.max(0, p.capacity_gb - p.available_gb);
+      const pct = p.capacity_gb ? Math.min(100, 100*used/p.capacity_gb) : 0;
+      return `<div class="card">
+        <div class="head"><span>${p.name}</span><span class="tag ${p.active?'on':'off'}">${p.active?'active':'inactive'}</span></div>
+        <div class="sub">${p.path}</div>
+        ${p.capacity_gb?`<div class="meter"><span style="width:${pct.toFixed(1)}%"></span></div>
+        <div class="sub">${used.toFixed(1)} / ${p.capacity_gb} GB used</div>`:''}
+      </div>`;
+    }).join('') : '<div class="empty">no storage pools</div>';
+
+    // networks
+    const nets = await api('/api/networks');
+    $('#nets').innerHTML = nets.length ? nets.map(n=>`
+      <div class="card">
+        <div class="head"><span>${n.name}</span><span class="tag ${n.active?'on':'off'}">${n.active?'active':'inactive'}</span></div>
+        <div class="sub">${n.forward||'isolated'}${n.bridge?' · '+n.bridge:''}</div>
+      </div>`).join('') : '<div class="empty">no networks</div>';
+  }catch(e){ toast(e.message, true); }
+}
+
+async function act(name, action){
+  try{ await api(`/api/vms/${name}/${action}`, {method:'POST'}); toast(`${name}: ${action}`); refresh(); }
+  catch(e){ toast(e.message, true); }
+}
+async function del(name){
+  if(!confirm(`Delete VM "${name}" and its disk? This cannot be undone.`)) return;
+  try{ await api(`/api/vms/${name}`, {method:'DELETE'}); toast(`${name}: deleted`); refresh(); }
+  catch(e){ toast(e.message, true); }
+}
+
+async function populateModalOptions(){
+  try{
+    const [isos, pools, nets] = await Promise.all([
+      api('/api/isos'), api('/api/pools'), api('/api/networks')]);
+    $('#f-iso').innerHTML = '<option value="">— none (boot from disk) —</option>' +
+      isos.map(i=>`<option value="${i.path}">${i.name} (${i.size_gb} GB)</option>`).join('');
+    $('#f-pool').innerHTML = pools.filter(p=>p.active)
+      .map(p=>`<option value="${p.name}">${p.name} — ${p.available_gb} GB free</option>`).join('')
+      || '<option value="">(no pools)</option>';
+    $('#f-net').innerHTML = nets.filter(n=>n.active)
+      .map(n=>`<option value="${n.name}">${n.name} (${n.forward||'isolated'})</option>`).join('')
+      || '<option value="">(no networks)</option>';
+  }catch(e){ toast(e.message, true); }
+}
+
+async function openModal(){ await populateModalOptions(); $('#overlay').classList.add('show'); $('#f-name').focus(); }
+function closeModal(){ $('#overlay').classList.remove('show'); }
+async function createVM(){
+  const body = {
+    name: $('#f-name').value.trim(),
+    memory_mb: parseInt($('#f-mem').value,10),
+    vcpus: parseInt($('#f-cpu').value,10),
+    disk_gb: parseInt($('#f-disk').value,10),
+    iso_path: $('#f-iso').value || null,
+    pool: $('#f-pool').value || null,
+    network: $('#f-net').value || null,
+  };
+  const btn = $('#create-btn'); btn.disabled = true;
+  try{
+    await api('/api/vms', {method:'POST', body:JSON.stringify(body)});
+    toast(`created ${body.name}`); closeModal();
+    ['f-name','f-iso'].forEach(id=>$('#'+id).value='');
+    refresh();
+  }catch(e){ toast(e.message, true); }
+  finally{ btn.disabled = false; }
+}
+
+async function logout(){
+  try{ await api('/api/logout', {method:'POST'}); }catch(e){}
+  location.href = '/login';
+}
+function openPwModal(){ $('#pw-overlay').classList.add('show'); $('#pw-cur').focus(); }
+function closePwModal(){ $('#pw-overlay').classList.remove('show'); ['pw-cur','pw-new','pw-new2'].forEach(id=>$('#'+id).value=''); }
+async function changePassword(){
+  const cur=$('#pw-cur').value, n1=$('#pw-new').value, n2=$('#pw-new2').value;
+  if(n1!==n2){ toast('new passwords do not match', true); return; }
+  if(n1.length<8){ toast('new password must be at least 8 characters', true); return; }
+  const btn=$('#pw-btn'); btn.disabled=true;
+  try{
+    await api('/api/change-password', {method:'POST', body:JSON.stringify({current:cur,new:n1})});
+    toast('password updated'); closePwModal();
+  }catch(e){ toast(e.message, true); }
+  finally{ btn.disabled=false; }
+}
+
+$('#overlay').addEventListener('click', e=>{ if(e.target.id==='overlay') closeModal(); });
+$('#pw-overlay').addEventListener('click', e=>{ if(e.target.id==='pw-overlay') closePwModal(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal(); closePwModal(); } });
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

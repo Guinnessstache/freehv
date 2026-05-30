@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreeHV · console · {{ vm_name }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#06080a; --bar:#0d1116; --line:#222a32; --ink:#d7dde3;
+    --ink-dim:#8a949e; --amber:#ffb627; --green:#3ad07a; --red:#ff5d5d;
+    --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--mono);
+    display:flex;flex-direction:column;overflow:hidden}
+  .bar{display:flex;align-items:center;gap:14px;padding:9px 14px;background:var(--bar);
+    border-bottom:1px solid var(--line);font-size:12px;flex:0 0 auto}
+  .bar a{color:var(--ink-dim);text-decoration:none}
+  .bar a:hover{color:var(--ink)}
+  .name{color:var(--amber);font-weight:600}
+  .name b{color:var(--ink-dim);font-weight:400;margin-right:6px}
+  .spacer{flex:1}
+  .status{display:flex;align-items:center;gap:7px;font-size:11px;text-transform:uppercase;letter-spacing:1px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ink-dim);transition:.2s}
+  .status.connecting .dot{background:var(--amber);animation:pulse 1s infinite}
+  .status.connected .dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .status.error .dot,.status.closed .dot{background:var(--red)}
+  @keyframes pulse{50%{opacity:.3}}
+  button{font-family:var(--mono);font-size:11px;cursor:pointer;border:1px solid var(--line);
+    background:#161b21;color:var(--ink);padding:6px 11px;border-radius:4px}
+  button:hover{border-color:var(--ink-dim)}
+  #screen{flex:1;min-height:0;background:#000;display:flex;align-items:center;justify-content:center}
+  #screen canvas{display:block}
+  .msg{color:var(--ink-dim);font-size:13px;text-align:center;padding:40px;max-width:520px;line-height:1.6}
+  .msg .big{color:var(--amber);font-size:15px;display:block;margin-bottom:10px}
+</style>
+</head>
+<body>
+  <div class="bar">
+    <a href="/">← FreeHV</a>
+    <span class="name"><b>console //</b>{{ vm_name }}</span>
+    <div class="spacer"></div>
+    <button id="cad" title="Send Ctrl+Alt+Del">Ctrl+Alt+Del</button>
+    <button id="fs">Fullscreen</button>
+    <button id="reconnect" style="display:none">Reconnect</button>
+    <div class="status connecting" id="status"><span class="dot"></span><span id="status-text">connecting</span></div>
+  </div>
+  <div id="screen">
+    <div class="msg" id="placeholder"><span class="big">connecting to guest…</span>
+      negotiating the RFB stream through the FreeHV proxy</div>
+  </div>
+
+<script type="module">
+import RFB from '/static/novnc/core/rfb.js';
+
+const VM = {{ vm_name|tojson }};
+const statusEl = document.getElementById('status');
+const statusText = document.getElementById('status-text');
+const placeholder = document.getElementById('placeholder');
+const screen = document.getElementById('screen');
+let rfb = null;
+
+function setStatus(cls, text){ statusEl.className = 'status ' + cls; statusText.textContent = text; }
+
+function showMessage(title, detail){
+  placeholder.style.display = 'block';
+  placeholder.innerHTML = `<span class="big">${title}</span>${detail||''}`;
+}
+
+async function connect(){
+  document.getElementById('reconnect').style.display = 'none';
+  setStatus('connecting', 'connecting');
+  showMessage('connecting to guest…', 'negotiating the RFB stream through the FreeHV proxy');
+
+  // Confirm a live console exists before opening the socket.
+  let info;
+  try{
+    info = await (await fetch(`/api/vms/${encodeURIComponent(VM)}/console-info`)).json();
+  }catch(e){ return fail('could not reach the daemon'); }
+
+  if(!info.available){
+    setStatus('error', 'unavailable');
+    showMessage('console unavailable', info.reason || 'the VM may not be running');
+    document.getElementById('reconnect').style.display = '';
+    return;
+  }
+
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url = `${scheme}://${location.host}${info.ws_path}`;
+
+  placeholder.style.display = 'none';
+  rfb = new RFB(screen, url);
+  rfb.scaleViewport = true;       // fit the guest screen to the window
+  rfb.clipViewport = false;
+  rfb.focusOnClick = true;
+
+  rfb.addEventListener('connect', () => {
+    setStatus('connected', 'connected');
+  });
+  rfb.addEventListener('disconnect', (e) => {
+    if(e.detail && e.detail.clean){ setStatus('closed', 'disconnected'); showMessage('session ended', 'the guest closed the console connection'); }
+    else fail('connection lost');
+  });
+  rfb.addEventListener('securityfailure', () => fail('VNC security negotiation failed'));
+}
+
+function fail(reason){
+  setStatus('error', 'error');
+  showMessage('console error', reason);
+  document.getElementById('reconnect').style.display = '';
+}
+
+document.getElementById('cad').onclick = () => rfb && rfb.sendCtrlAltDel();
+document.getElementById('reconnect').onclick = connect;
+document.getElementById('fs').onclick = () => {
+  if(!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
+};
+
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+[Unit]
+Description=FreeHV Management Daemon
+After=network.target libvirtd.service
+Wants=libvirtd.service
+
+[Service]
+Type=simple
+# Adjust the path to wherever you deploy freehv-manager:
+WorkingDirectory=/opt/freehv/freehv-manager
+ExecStart=/usr/bin/python3 /opt/freehv/freehv-manager/app.py
+Restart=on-failure
+RestartSec=3
+# Force the real KVM backend on the appliance (fail loudly if KVM is missing):
+Environment=FREEHV_BACKEND=kvm
+# Credential + secret-key store (auto-created, mode 0600):
+Environment=FREEHV_CONFIG_DIR=/var/lib/freehv
+# Optional: serve over HTTPS by pointing these at a cert/key pair:
+#Environment=FREEHV_TLS_CERT=/etc/freehv/cert.pem
+#Environment=FREEHV_TLS_KEY=/etc/freehv/key.pem
+
+[Install]
+WantedBy=multi-user.target
