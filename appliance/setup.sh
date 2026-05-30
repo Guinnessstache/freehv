@@ -33,6 +33,56 @@ if [[ ! -d "$MANAGER_SRC" ]]; then
 fi
 
 # --- 1. packages ----------------------------------------------------------
+# When running inside the Debian installer chroot (--in-target), we do NOT
+# install the heavy virtualization stack here: the installer environment's
+# network and package state are unreliable mid-install, which is the classic
+# reason appliance provisioning "succeeds" but produces a box with no service.
+# Instead we deploy the files and register a one-shot firstboot service that
+# re-runs THIS script normally on the freshly booted system, where networking
+# is dependable. The non-target path installs packages directly as before.
+if [[ $IN_TARGET -eq 1 ]]; then
+  log "(in-target) deploying files and scheduling firstboot provisioning…"
+
+  # Deploy the daemon to its final location (payload already at /opt/freehv).
+  mkdir -p "$DEST"
+  if [[ "$MANAGER_SRC" != "$DEST/freehv-manager" ]]; then
+    rm -rf "$DEST/freehv-manager"
+    cp -a "$MANAGER_SRC" "$DEST/freehv-manager"
+  fi
+  mkdir -p "$CONFIG_DIR/disks" "$CONFIG_DIR/isos"
+  chmod 750 "$CONFIG_DIR"
+
+  # One-shot service: runs the full provisioner on first real boot, then
+  # disables itself so it never runs again.
+  cat > /etc/systemd/system/freehv-firstboot.service <<UNIT
+[Unit]
+Description=FreeHV first-boot provisioning
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/freehv/.provisioned
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash /opt/freehv/appliance/setup.sh
+ExecStartPost=/usr/bin/touch /var/lib/freehv/.provisioned
+ExecStartPost=/bin/systemctl disable freehv-firstboot.service
+RemainAfterExit=yes
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  # Enable for first boot (symlink directly; systemctl may not run in chroot).
+  ln -sf /etc/systemd/system/freehv-firstboot.service \
+    /etc/systemd/system/multi-user.target.wants/freehv-firstboot.service
+  systemctl enable freehv-firstboot.service 2>/dev/null || true
+
+  log "(in-target) done. FreeHV will finish installing on first boot."
+  exit 0
+fi
+
+# --- 1b. packages (normal / firstboot run) --------------------------------
 log "Installing virtualization stack and dependencies…"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -74,28 +124,16 @@ log "Installing systemd service…"
 install -m 0644 "$DEST/freehv-manager/freehv-manager.service" \
   /etc/systemd/system/freehv-manager.service
 
-enable_now(){ systemctl "$@"; }
-if [[ $IN_TARGET -eq 1 ]]; then
-  # In the installer chroot there's no running systemd: enable via symlink only.
-  log "(in-target) enabling services for first boot…"
-  systemctl enable libvirtd.service          2>/dev/null || \
-    ln -sf /lib/systemd/system/libvirtd.service \
-      /etc/systemd/system/multi-user.target.wants/libvirtd.service 2>/dev/null || true
-  systemctl enable freehv-manager.service     2>/dev/null || \
-    ln -sf /etc/systemd/system/freehv-manager.service \
-      /etc/systemd/system/multi-user.target.wants/freehv-manager.service 2>/dev/null || true
-else
-  systemctl daemon-reload
-  log "Enabling and starting libvirt + default network…"
-  systemctl enable --now libvirtd.service || true
-  # Make sure the default NAT network exists and autostarts.
-  virsh net-info default >/dev/null 2>&1 || \
-    virsh net-define /usr/share/libvirt/networks/default.xml 2>/dev/null || true
-  virsh net-autostart default 2>/dev/null || true
-  virsh net-start default 2>/dev/null || true
-  log "Enabling and starting FreeHV…"
-  systemctl enable --now freehv-manager.service
-fi
+systemctl daemon-reload
+log "Enabling and starting libvirt + default network…"
+systemctl enable --now libvirtd.service || true
+# Make sure the default NAT network exists and autostarts.
+virsh net-info default >/dev/null 2>&1 || \
+  virsh net-define /usr/share/libvirt/networks/default.xml 2>/dev/null || true
+virsh net-autostart default 2>/dev/null || true
+virsh net-start default 2>/dev/null || true
+log "Enabling and starting FreeHV…"
+systemctl enable --now freehv-manager.service
 
 # --- 4. done --------------------------------------------------------------
 cat <<EOF
