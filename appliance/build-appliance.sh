@@ -40,15 +40,24 @@ chmod -R u+w "$WORK/iso"
 # --- 2. inject preseed + FreeHV payload -----------------------------------
 log "Injecting preseed and FreeHV payload…"
 cp "$PRESEED" "$WORK/iso/preseed.cfg"
-# Stage the repo as /freehv (excluding any python caches / prior build output).
+# Stage ONLY the files the appliance needs, via an explicit allowlist. This is
+# deliberately strict: the repo root in CI also contains the downloaded Debian
+# ISO, .git metadata, checksums, and prior build output, none of which belong
+# on the installer media. Copying the whole repo would bloat and corrupt the
+# payload, so we copy just the daemon, the appliance scripts, and the license.
 mkdir -p "$WORK/iso/freehv"
-( cd "$REPO_DIR" && \
-  find . -path ./appliance/'*'.iso -prune -o -name '__pycache__' -prune -o \
-       -type f -print | \
-  while read -r f; do
-    mkdir -p "$WORK/iso/freehv/$(dirname "$f")"
-    cp "$f" "$WORK/iso/freehv/$f"
-  done )
+PAYLOAD_ITEMS=( freehv-manager appliance LICENSE )
+for item in "${PAYLOAD_ITEMS[@]}"; do
+  if [[ ! -e "$REPO_DIR/$item" ]]; then
+    die "expected payload item missing from repo: $item"
+  fi
+  cp -a "$REPO_DIR/$item" "$WORK/iso/freehv/$item"
+done
+# Scrub anything that shouldn't ship even from within those dirs.
+find "$WORK/iso/freehv" \( -name '__pycache__' -o -name '*.pyc' \
+     -o -name '*.iso' -o -name 'auth.json' -o -name '*.qcow2' \) \
+     -exec rm -rf {} + 2>/dev/null || true
+log "staged payload: ${PAYLOAD_ITEMS[*]} ($(du -sh "$WORK/iso/freehv" | cut -f1))"
 
 # --- 3. patch the boot menus to auto-run the preseed ----------------------
 # The exact boot-config paths vary slightly between Debian releases, so we
