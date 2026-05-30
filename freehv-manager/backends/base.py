@@ -21,6 +21,7 @@ class VM:
     memory_mb: int
     disk_gb: int | None = None
     vnc_port: int | None = None
+    has_cdrom: bool = False    # True if install media is currently attached
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -150,6 +151,11 @@ class Backend(ABC):
     def finalize_iso(self, filename: str) -> None:
         """Fix ownership/permissions after an upload so libvirt can read it,
         and refresh the pool."""
+
+    @abstractmethod
+    def eject_iso(self, name: str) -> None:
+        """Detach install media from a VM and set it to boot from disk.
+        Lets a freshly-installed guest boot the OS instead of the installer."""
 
 
 class BackendError(Exception):

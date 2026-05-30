@@ -285,6 +285,7 @@ async function refresh(){
         <td>${fmtMem(v.memory_mb)}</td>
         <td>${v.disk_gb? v.disk_gb+' GB':'—'}</td>
         <td class="actions">
+          ${v.has_cdrom ? `<button class="btn-sm" onclick="ejectIso('${v.name}')" title="Detach install media and boot from disk">⏏ Eject ISO</button>` : ''}
           ${run
             ? `<button class="btn-sm btn-blue" onclick="window.open('/console/${v.name}','_blank')">Console</button>
                <button class="btn-sm" onclick="act('${v.name}','shutdown')">Shutdown</button>
@@ -418,6 +419,11 @@ function uploadIso(){
 
 async function act(name, action){
   try{ await api(`/api/vms/${name}/${action}`, {method:'POST'}); toast(`${name}: ${action}`); refresh(); }
+  catch(e){ toast(e.message, true); }
+}
+async function ejectIso(name){
+  if(!confirm(`Eject install media from "${name}"?\n\nThe VM will boot from its disk on next restart. Do this after the OS is installed.`)) return;
+  try{ await api(`/api/vms/${name}/eject-iso`, {method:'POST'}); toast(`${name}: ISO ejected — boots from disk on next restart`); refresh(); }
   catch(e){ toast(e.message, true); }
 }
 async function del(name){

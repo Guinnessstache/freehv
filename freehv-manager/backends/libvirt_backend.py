@@ -136,11 +136,23 @@ class LibvirtBackend(Backend):
     def _vm_from_domain(self, dom) -> VM:
         state = _STATE_MAP.get(dom.state()[0], "unknown")
         info = dom.info()  # [state, maxMem(KiB), mem(KiB), nrVirtCpu, cpuTime]
+        # Detect whether a cdrom device currently has install media in it.
+        has_cdrom = False
+        try:
+            root = ET.fromstring(dom.XMLDesc(0))
+            for disk in root.findall("./devices/disk[@device='cdrom']"):
+                src = disk.find("source")
+                if src is not None and (src.get("file") or src.get("dev")):
+                    has_cdrom = True
+                    break
+        except ET.ParseError:
+            pass
         return VM(
             name=dom.name(),
             state=state,
             vcpus=info[3],
             memory_mb=info[1] // 1024,
+            has_cdrom=has_cdrom,
         )
 
     def _lookup(self, name: str):
@@ -396,3 +408,47 @@ class LibvirtBackend(Backend):
             self._conn.storagePoolLookupByName(ISO_POOL).refresh(0)
         except libvirt.libvirtError:
             pass
+
+    def eject_iso(self, name: str) -> None:
+        """Detach install media and make the VM boot from its disk.
+
+        We rewrite the persistent domain XML: drop the <source> from the cdrom
+        device (leaving an empty drive) and reorder <boot> so 'hd' comes first.
+        Editing the persistent config means the change survives reboots; it
+        applies on next boot, so we advise the user the VM will use it then.
+        """
+        dom = self._lookup(name)
+        try:
+            root = ET.fromstring(dom.XMLDesc(0))
+        except ET.ParseError as e:
+            raise BackendError(f"Could not read domain XML: {e}")
+
+        changed = False
+        # 1. Empty the cdrom drive(s).
+        for disk in root.findall("./devices/disk[@device='cdrom']"):
+            src = disk.find("source")
+            if src is not None:
+                disk.remove(src)
+                changed = True
+
+        # 2. Make disk the primary boot device.
+        os_el = root.find("./os")
+        if os_el is not None:
+            boots = os_el.findall("boot")
+            had_hd_first = bool(boots) and boots[0].get("dev") == "hd"
+            for b in boots:
+                os_el.remove(b)
+            hd = ET.SubElement(os_el, "boot"); hd.set("dev", "hd")
+            cd = ET.SubElement(os_el, "boot"); cd.set("dev", "cdrom")
+            if not had_hd_first:
+                changed = True
+
+        if not changed:
+            return  # nothing attached / already disk-first; no-op
+
+        new_xml = ET.tostring(root, encoding="unicode")
+        try:
+            # Redefine the persistent domain with the updated config.
+            self._conn.defineXML(new_xml)
+        except libvirt.libvirtError as e:
+            raise BackendError(f"Could not update VM: {e}")

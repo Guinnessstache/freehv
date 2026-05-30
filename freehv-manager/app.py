@@ -323,6 +323,15 @@ def api_update_system():
     return jsonify(result), (200 if result.get("ok") else 400)
 
 
+@app.route("/api/vms/<name>/eject-iso", methods=["POST"])
+def api_eject_iso(name):
+    try:
+        backend.eject_iso(name)
+    except BackendError as e:
+        return _err(str(e))
+    return jsonify({"ok": True})
+
+
 @app.route("/api/vms/<name>/console-info")
 def api_console_info(name):
     """Tell the UI whether a live console is available (without exposing the

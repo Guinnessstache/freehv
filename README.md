@@ -11,7 +11,7 @@ Create virtual machines, install any operating system, and manage everything fro
 - **Web console** — create, start, stop, force-off, and delete VMs from your browser.
 - **In-browser VNC** — boot a guest and click through an OS installer without leaving the browser. The console is proxied through the daemon (no separate VNC client needed).
 - **Storage & networking** — auto-created disk and ISO pools, with install media, storage pool, and network all chosen from dropdowns. Live capacity and network status on the dashboard.
-- **ISO management** — upload install media from your computer, or paste a URL and have the server download it. No SSH needed.
+- **ISO management** — upload install media from your computer, or paste a URL and have the server download it. No SSH needed. After installing an OS, eject the ISO so the VM boots from its disk.
 - **In-place updates** — one-click "Update FreeHV" follows tagged releases from this repo and restarts the service; a separate, clearly-warned action updates the underlying OS packages.
 - **Secure by default** — admin login (hashed credential), session cookies with CSRF protection, login throttling, guest VNC bound to loopback (reachable only through the authenticated proxy), and optional TLS.
 - **Bare-metal appliance** — provision an existing Linux box with one script, or build an unattended "insert USB, install, done" installer ISO.

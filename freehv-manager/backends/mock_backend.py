@@ -61,7 +61,8 @@ class MockBackend(Backend):
         if not name.strip():
             raise BackendError("VM name cannot be empty.")
         vm = VM(name=name, state="stopped", vcpus=vcpus, memory_mb=memory_mb,
-                disk_gb=disk_gb, vnc_port=5900 + random.randint(1, 99))
+                disk_gb=disk_gb, vnc_port=5900 + random.randint(1, 99),
+                has_cdrom=bool(iso_path))
         self._vms[name] = vm.to_dict()
         self._save()
         return vm
@@ -157,3 +158,8 @@ class MockBackend(Backend):
         self._isos = getattr(self, "_isos", [])
         if filename not in self._isos:
             self._isos.append(filename)
+
+    def eject_iso(self, name):
+        vm = self._require(name)
+        vm["has_cdrom"] = False
+        self._save()
