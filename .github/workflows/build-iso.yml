@@ -1,0 +1,114 @@
+name: Build FreeHV Installer ISO
+
+# Builds a ready-to-flash freehv-installer.iso in the cloud so end users never
+# have to run the build themselves. GitHub's runners can reach Debian's
+# mirrors, download the netinst image, remaster it with the FreeHV payload via
+# appliance/build-appliance.sh, and publish the result.
+#
+# Triggers:
+#   - on any tag like v1.0.0  -> builds AND attaches the ISO to a GitHub Release
+#   - manually (workflow_dispatch) -> builds and uploads as a workflow artifact
+#   - on push to main that touches the appliance/daemon -> sanity build artifact
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+    paths:
+      - 'appliance/**'
+      - 'freehv-manager/**'
+      - '.github/workflows/build-iso.yml'
+  workflow_dispatch:
+    inputs:
+      debian_iso_url:
+        description: 'Debian netinst ISO URL to remaster'
+        required: false
+        default: 'https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/'
+
+permissions:
+  contents: write   # needed to create/attach release assets
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out FreeHV
+        uses: actions/checkout@v4
+
+      - name: Install build tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xorriso isolinux curl
+
+      - name: Resolve and download the latest Debian netinst ISO
+        id: debian
+        run: |
+          set -euo pipefail
+          BASE="https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/"
+          # Find the current netinst filename from the directory listing.
+          ISO_NAME="$(curl -fsSL "$BASE" \
+            | grep -oE 'debian-[0-9.]+-amd64-netinst\.iso' \
+            | head -n1)"
+          if [ -z "${ISO_NAME:-}" ]; then
+            echo "Could not determine current Debian netinst filename." >&2
+            exit 1
+          fi
+          echo "Downloading $ISO_NAME ..."
+          curl -fSL -o debian-netinst.iso "${BASE}${ISO_NAME}"
+          # Verify integrity against Debian's published checksums.
+          curl -fSL -o SHA256SUMS "${BASE}SHA256SUMS"
+          EXPECTED="$(grep " ${ISO_NAME}\$" SHA256SUMS | awk '{print $1}')"
+          ACTUAL="$(sha256sum debian-netinst.iso | awk '{print $1}')"
+          echo "expected=$EXPECTED"
+          echo "actual=  $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "Checksum mismatch — aborting." >&2
+            exit 1
+          fi
+          echo "iso_name=$ISO_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Build the FreeHV installer ISO
+        run: |
+          set -euo pipefail
+          chmod +x appliance/build-appliance.sh
+          ./appliance/build-appliance.sh \
+            "$GITHUB_WORKSPACE/debian-netinst.iso" \
+            "$GITHUB_WORKSPACE/freehv-installer.iso"
+          ls -lh freehv-installer.iso
+
+      - name: Generate checksum for the FreeHV ISO
+        run: sha256sum freehv-installer.iso | tee freehv-installer.iso.sha256
+
+      - name: Upload as workflow artifact (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: freehv-installer-iso
+          path: |
+            freehv-installer.iso
+            freehv-installer.iso.sha256
+          retention-days: 14
+
+      - name: Attach ISO to the GitHub Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            freehv-installer.iso
+            freehv-installer.iso.sha256
+          body: |
+            ## FreeHV ${{ github.ref_name }}
+
+            Ready-to-flash hypervisor installer. **No build step required.**
+
+            ### Install
+            1. Download `freehv-installer.iso` below.
+            2. Flash it to a USB stick (≥2 GB):
+               - **Linux/macOS:** `sudo dd if=freehv-installer.iso of=/dev/sdX bs=4M status=progress oflag=sync`
+               - **Windows:** use [Rufus](https://rufus.ie) or [balenaEtcher](https://etcher.balena.io) in DD-image mode.
+            3. Enable VT-x/AMD-V in the target machine's BIOS, boot from USB.
+            4. The installer is **unattended** and **erases the target disk**. When it reboots, open `http://<appliance-ip>:5050`.
+            5. Get the initial admin password on the box: `journalctl -u freehv-manager | grep 'Initial admin password'`
+
+            Verify the download with `freehv-installer.iso.sha256`.
