@@ -71,6 +71,31 @@ first boot.
   that's your first end-to-end test. Option A is the lower-risk way to get a
   working appliance immediately.
 
+## How provisioning works (and troubleshooting)
+
+The installer does **not** install the virtualization stack during the Debian
+install itself. The installer's chroot has unreliable networking, which can
+make `apt-get` fail silently and leave you with an installed box but no FreeHV
+service. Instead, the preseed deploys the FreeHV files and registers a
+**one-shot first-boot service** (`freehv-firstboot.service`) that runs the full
+provisioner the first time the machine boots normally — downloading qemu-kvm,
+libvirt, etc. over a working network — then disables itself.
+
+So on first boot the appliance may take a couple of minutes to come up while it
+provisions. You can watch it:
+
+```sh
+journalctl -u freehv-firstboot -f
+```
+
+When it completes, `freehv-manager` will be running on `:5050`.
+
+If you ever need to (re)run provisioning manually on an installed box:
+
+```sh
+sudo bash /opt/freehv/appliance/setup.sh
+```
+
 ## Files
 
 ```
