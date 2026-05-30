@@ -169,6 +169,9 @@ class LibvirtBackend(Backend):
     def create_vm(self, name, memory_mb, vcpus, disk_gb, iso_path,
                   pool=None, network=None) -> VM:
         pool = pool or DISK_POOL
+        # Never place a VM disk in the ISO pool — that's for install media only.
+        if pool == ISO_POOL:
+            pool = DISK_POOL
         network = network or "default"
         try:
             disk_dir = self._pool_path(pool)
@@ -319,3 +322,77 @@ class LibvirtBackend(Backend):
             net.create()
         if not net.autostart():
             net.setAutostart(True)
+
+    # --- ISO media management --------------------------------------------
+    def iso_dir(self) -> str:
+        try:
+            return str(self._pool_path(ISO_POOL))
+        except (libvirt.libvirtError, BackendError):
+            return str(ISO_DIR)
+
+    def _qemu_owner(self):
+        import pwd
+        for name in ("libvirt-qemu", "qemu"):
+            try:
+                p = pwd.getpwnam(name)
+                return p.pw_uid, p.pw_gid
+            except KeyError:
+                continue
+        return None
+
+    def finalize_iso(self, filename: str) -> None:
+        target = Path(self.iso_dir()) / Path(filename).name
+        if not target.exists():
+            raise BackendError(f"ISO '{filename}' not found after transfer.")
+        owner = self._qemu_owner()
+        try:
+            if owner:
+                os.chown(target, owner[0], owner[1])
+            os.chmod(target, 0o644)
+        except OSError as e:
+            raise BackendError(f"Could not set ISO permissions: {e}")
+        try:
+            self._conn.storagePoolLookupByName(ISO_POOL).refresh(0)
+        except libvirt.libvirtError:
+            pass
+
+    def fetch_iso(self, url: str, filename: str | None = None) -> str:
+        from urllib.parse import urlparse
+        if not filename:
+            filename = os.path.basename(urlparse(url).path) or "download.iso"
+        if not filename.lower().endswith(".iso"):
+            filename += ".iso"
+        filename = os.path.basename(filename)  # strip any path components
+        target = Path(self.iso_dir()) / filename
+        if target.exists():
+            raise BackendError(f"An ISO named '{filename}' already exists.")
+        # Stream the download with curl (handles redirects, shows progress in
+        # the daemon log). Run as a subprocess so a huge ISO doesn't block in
+        # Python memory.
+        try:
+            subprocess.run(
+                ["curl", "-fSL", "--connect-timeout", "20",
+                 "-o", str(target), url],
+                check=True, capture_output=True, text=True, timeout=7200,
+            )
+        except subprocess.CalledProcessError as e:
+            target.unlink(missing_ok=True)
+            raise BackendError(f"Download failed: {e.stderr or e}")
+        except subprocess.TimeoutExpired:
+            target.unlink(missing_ok=True)
+            raise BackendError("Download timed out.")
+        self.finalize_iso(filename)
+        return filename
+
+    def delete_iso(self, filename: str) -> None:
+        target = Path(self.iso_dir()) / Path(filename).name
+        if not target.exists():
+            raise BackendError(f"ISO '{filename}' not found.")
+        try:
+            target.unlink()
+        except OSError as e:
+            raise BackendError(f"Could not delete ISO: {e}")
+        try:
+            self._conn.storagePoolLookupByName(ISO_POOL).refresh(0)
+        except libvirt.libvirtError:
+            pass

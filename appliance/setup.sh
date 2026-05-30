@@ -25,6 +25,24 @@ CONFIG_DIR=/var/lib/freehv
 
 log(){ printf '\033[1;33m[freehv]\033[0m %s\n' "$*"; }
 
+# Create the storage dirs with ownership QEMU can actually use. libvirt runs
+# guests as an unprivileged user (libvirt-qemu on Debian, sometimes qemu), and
+# that user must be able to traverse /var/lib/freehv and read/write the disk
+# and ISO pools — otherwise the first VM fails with "Permission denied".
+setup_storage_dirs(){
+  mkdir -p "$CONFIG_DIR/disks" "$CONFIG_DIR/isos"
+  # Determine the QEMU user/group present on this system.
+  local qemu_user=""
+  if id libvirt-qemu >/dev/null 2>&1; then qemu_user="libvirt-qemu";
+  elif id qemu >/dev/null 2>&1; then qemu_user="qemu"; fi
+  # /var/lib/freehv must be traversable (o+x) so the QEMU user can reach pools.
+  chmod 755 "$CONFIG_DIR"
+  if [[ -n "$qemu_user" ]]; then
+    chown -R "$qemu_user":"$qemu_user" "$CONFIG_DIR/disks" "$CONFIG_DIR/isos"
+  fi
+  chmod 775 "$CONFIG_DIR/disks" "$CONFIG_DIR/isos"
+}
+
 if [[ $EUID -ne 0 ]]; then
   echo "Please run as root (sudo)." >&2; exit 1
 fi
@@ -50,7 +68,7 @@ if [[ $IN_TARGET -eq 1 ]]; then
     cp -a "$MANAGER_SRC" "$DEST/freehv-manager"
   fi
   mkdir -p "$CONFIG_DIR/disks" "$CONFIG_DIR/isos"
-  chmod 750 "$CONFIG_DIR"
+  chmod 755 "$CONFIG_DIR"
 
   # One-shot service: runs the full provisioner on first real boot, then
   # disables itself so it never runs again.
@@ -93,6 +111,7 @@ REQUIRED=(
   libvirt-daemon-system libvirt-clients
   python3 python3-libvirt python3-flask python3-pip
   bridge-utils dnsmasq-base
+  git curl
 )
 apt-get install -y "${REQUIRED[@]}"
 
@@ -110,14 +129,42 @@ fi
 # --- 2. deploy the daemon -------------------------------------------------
 log "Deploying management daemon to $DEST…"
 mkdir -p "$DEST"
-# When run from the installer, the repo is already at $DEST — don't copy onto
-# ourselves. Otherwise (re)place a clean copy of the manager.
-if [[ "$MANAGER_SRC" != "$DEST/freehv-manager" ]]; then
-  rm -rf "$DEST/freehv-manager"
-  cp -a "$MANAGER_SRC" "$DEST/freehv-manager"
+
+# For the in-app updater to work, /opt/freehv should be a git checkout tracking
+# the project repo. If it isn't one yet (older file-copy installs), convert it
+# by cloning over it — best-effort, never fatal. Updates then become a git
+# fetch/checkout of the latest release tag from the UI.
+FREEHV_REPO_URL="${FREEHV_REPO_URL:-https://github.com/Guinnessstache/freehv.git}"
+if [[ ! -d "$DEST/.git" ]] && command -v git >/dev/null 2>&1; then
+  if git ls-remote "$FREEHV_REPO_URL" >/dev/null 2>&1; then
+    log "Converting $DEST to a git checkout for in-app updates…"
+    TMP_CLONE="$(mktemp -d)"
+    if git clone --depth 50 "$FREEHV_REPO_URL" "$TMP_CLONE/repo" >/dev/null 2>&1; then
+      # Preserve runtime data dir; move the .git and tracked files into place.
+      rm -rf "$DEST/.git"
+      cp -a "$TMP_CLONE/repo/.git" "$DEST/.git"
+      ( cd "$DEST" && git checkout -f >/dev/null 2>&1 ) || true
+      # Pin to the latest release tag if one exists (release channel default).
+      ( cd "$DEST" && git fetch --tags >/dev/null 2>&1 && \
+        LATEST="$(git describe --tags "$(git rev-list --tags --max-count=1 2>/dev/null)" 2>/dev/null)" && \
+        [[ -n "$LATEST" ]] && git checkout -f "$LATEST" >/dev/null 2>&1 ) || true
+    fi
+    rm -rf "$TMP_CLONE"
+  else
+    log "note: $FREEHV_REPO_URL not reachable; skipping git setup (updater will be unavailable until repo is cloned)."
+  fi
 fi
-mkdir -p "$CONFIG_DIR/disks" "$CONFIG_DIR/isos"
-chmod 750 "$CONFIG_DIR"
+
+# Ensure the daemon files are present. If we converted to a git checkout above,
+# they're already there from the checkout; otherwise place a clean copy.
+if [[ ! -f "$DEST/freehv-manager/app.py" ]]; then
+  if [[ "$MANAGER_SRC" != "$DEST/freehv-manager" ]]; then
+    rm -rf "$DEST/freehv-manager"
+    cp -a "$MANAGER_SRC" "$DEST/freehv-manager"
+  fi
+fi
+# Storage dirs with correct QEMU ownership (libvirt user now exists post-install)
+setup_storage_dirs
 
 # --- 3. systemd service ---------------------------------------------------
 log "Installing systemd service…"

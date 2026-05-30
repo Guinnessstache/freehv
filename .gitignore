@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# FreeHV runtime artifacts
+auth.json
+*.qcow2
+freehv_mock.json
+.freehv/
+
+# Build output
+*.iso
+appliance/*.iso
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp

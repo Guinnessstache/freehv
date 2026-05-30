@@ -133,6 +133,24 @@ class Backend(ABC):
         """Make sure the libvirt 'default' NAT network is up & autostarting,
         so new VMs get connectivity without manual setup."""
 
+    # --- ISO media management (Track B) ----------------------------------
+    @abstractmethod
+    def iso_dir(self) -> str:
+        """Absolute path to the ISO pool directory (for uploads)."""
+
+    @abstractmethod
+    def fetch_iso(self, url: str, filename: str | None = None) -> str:
+        """Download an ISO from a URL into the ISO pool. Returns the filename."""
+
+    @abstractmethod
+    def delete_iso(self, filename: str) -> None:
+        """Remove an ISO from the ISO pool."""
+
+    @abstractmethod
+    def finalize_iso(self, filename: str) -> None:
+        """Fix ownership/permissions after an upload so libvirt can read it,
+        and refresh the pool."""
+
 
 class BackendError(Exception):
     """Raised for any backend-level failure; carries a user-facing message."""

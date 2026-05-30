@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -29,6 +30,7 @@ from flask_sock import Sock
 
 from auth import Auth
 from backends import get_backend, BackendError
+import updater
 
 app = Flask(__name__)
 app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 25}
@@ -43,6 +45,7 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Strict",   # blunts CSRF on the cookie-auth'd API
     SESSION_COOKIE_SECURE=_tls,
     PERMANENT_SESSION_LIFETIME=60 * 60 * 12,  # 12h
+    MAX_CONTENT_LENGTH=None,            # allow multi-GB ISO uploads
 )
 
 # --- simple per-IP login throttle (anti-brute-force) -----------------------
@@ -242,6 +245,82 @@ def api_ensure_default_net():
     except BackendError as e:
         return _err(str(e))
     return jsonify({"ok": True})
+
+
+@app.route("/api/isos/fetch", methods=["POST"])
+def api_fetch_iso():
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return _err("Please provide a valid http(s) URL.")
+    try:
+        name = backend.fetch_iso(url, data.get("filename") or None)
+    except BackendError as e:
+        return _err(str(e))
+    return jsonify({"ok": True, "filename": name})
+
+
+@app.route("/api/isos/upload", methods=["POST"])
+def api_upload_iso():
+    # Stream the uploaded file straight to the ISO pool dir, chunk by chunk,
+    # so a multi-GB ISO never has to fit in memory.
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return _err("No file provided.")
+    fname = os.path.basename(f.filename)
+    if not fname.lower().endswith(".iso"):
+        return _err("File must be a .iso image.")
+    dest = os.path.join(backend.iso_dir(), fname)
+    if os.path.exists(dest):
+        return _err(f"An ISO named '{fname}' already exists.")
+    try:
+        f.save(dest)              # werkzeug streams to disk
+        backend.finalize_iso(fname)
+    except (OSError, BackendError) as e:
+        try:
+            if os.path.exists(dest):
+                os.remove(dest)
+        except OSError:
+            pass
+        return _err(f"Upload failed: {e}")
+    return jsonify({"ok": True, "filename": fname})
+
+
+@app.route("/api/isos/<filename>", methods=["DELETE"])
+def api_delete_iso(filename):
+    try:
+        backend.delete_iso(filename)
+    except BackendError as e:
+        return _err(str(e))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/update/check")
+def api_update_check():
+    return jsonify(updater.check())
+
+
+@app.route("/api/update/apply", methods=["POST"])
+def api_update_apply():
+    result = updater.apply_update()
+    if not result.get("ok"):
+        return jsonify(result), 400
+    # Schedule a service restart shortly after responding, so the client gets
+    # confirmation before the daemon goes down and systemd brings it back up.
+    def _restart():
+        time.sleep(1.5)
+        try:
+            subprocess.Popen(["systemctl", "restart", "freehv-manager"])
+        except Exception:
+            os._exit(0)  # fallback: exit; systemd Restart=on-failure recovers
+    threading.Thread(target=_restart, daemon=True).start()
+    return jsonify(result)
+
+
+@app.route("/api/update/system", methods=["POST"])
+def api_update_system():
+    result = updater.system_update()
+    return jsonify(result), (200 if result.get("ok") else 400)
 
 
 @app.route("/api/vms/<name>/console-info")

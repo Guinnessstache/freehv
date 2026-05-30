@@ -168,6 +168,16 @@
     </div>
   </div>
 
+  <div class="bar" style="margin-top:30px">
+    <h2>Install Media (ISOs)</h2>
+    <div class="spacer"></div>
+    <button class="btn-sm" onclick="openIsoModal()">+ Add ISO</button>
+  </div>
+  <div id="isolist" class="cards"></div>
+
+  <div class="bar" style="margin-top:30px"><h2>System</h2></div>
+  <div id="updatecard" class="cards"></div>
+
   <footer>FreeHV · open-source KVM management</footer>
 </div>
 
@@ -204,6 +214,29 @@
       <button onclick="closePwModal()">Cancel</button>
       <button class="btn-primary" id="pw-btn" onclick="changePassword()">Update</button>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="iso-overlay">
+  <div class="modal">
+    <h3>Add <b>ISO</b></h3>
+    <div class="field">
+      <label>Download from URL (server fetches it)</label>
+      <input id="iso-url" placeholder="https://.../something.iso">
+    </div>
+    <div class="modal-actions" style="margin-top:10px">
+      <button onclick="closeIsoModal()">Cancel</button>
+      <button class="btn-primary" id="iso-url-btn" onclick="fetchIso()">Download</button>
+    </div>
+    <div style="border-top:1px solid var(--line);margin:18px 0"></div>
+    <div class="field">
+      <label>Or upload from this computer</label>
+      <input id="iso-file" type="file" accept=".iso">
+    </div>
+    <div class="modal-actions" style="margin-top:10px">
+      <button class="btn-primary" id="iso-up-btn" onclick="uploadIso()">Upload</button>
+    </div>
+    <div class="sub" id="iso-progress" style="margin-top:12px;color:var(--ink-dim)"></div>
   </div>
 </div>
 
@@ -281,7 +314,106 @@ async function refresh(){
         <div class="head"><span>${n.name}</span><span class="tag ${n.active?'on':'off'}">${n.active?'active':'inactive'}</span></div>
         <div class="sub">${n.forward||'isolated'}${n.bridge?' · '+n.bridge:''}</div>
       </div>`).join('') : '<div class="empty">no networks</div>';
+
+    // install media (ISOs)
+    const isos = await api('/api/isos');
+    $('#isolist').innerHTML = isos.length ? isos.map(i=>`
+      <div class="card">
+        <div class="head"><span>${i.name}</span>
+          <button class="btn-sm btn-red" onclick="delIso('${i.name.replace(/'/g,"\\'")}')">Delete</button>
+        </div>
+        <div class="sub">${i.size_gb} GB · ${i.pool}</div>
+      </div>`).join('') : '<div class="empty">no ISOs yet — click “+ Add ISO” to upload or download install media</div>';
+
+    // system / update status
+    refreshUpdateCard();
   }catch(e){ toast(e.message, true); }
+}
+
+async function refreshUpdateCard(){
+  try{
+    const u = await api('/api/update/check');
+    let html;
+    if(!u.supported){
+      html = `<div class="card"><div class="head"><span>FreeHV version</span><span class="tag">${u.current}</span></div>
+        <div class="sub">${u.reason||''}</div></div>`;
+    } else if(u.available){
+      html = `<div class="card"><div class="head"><span>Update available</span>
+        <button class="btn-sm btn-green" onclick="applyUpdate()">Update to ${u.latest}</button></div>
+        <div class="sub">current: ${u.current} → latest: ${u.latest}</div></div>`;
+    } else {
+      html = `<div class="card"><div class="head"><span>FreeHV is up to date</span><span class="tag on">${u.current}</span></div>
+        <div class="sub">${u.reason||'You’re on the latest release.'}</div></div>`;
+    }
+    // system packages action (always offered, clearly separate)
+    html += `<div class="card"><div class="head"><span>System packages (OS)</span>
+        <button class="btn-sm" onclick="systemUpdate()">Update OS packages</button></div>
+        <div class="sub">Updates Debian/qemu/libvirt. May require a reboot; can interrupt running VMs — run during a maintenance window.</div></div>`;
+    $('#updatecard').innerHTML = html;
+  }catch(e){ /* leave silent; non-critical */ }
+}
+
+async function applyUpdate(){
+  if(!confirm('Update FreeHV now? The console will briefly disconnect while the service restarts.')) return;
+  toast('updating…');
+  try{
+    const r = await api('/api/update/apply', {method:'POST'});
+    toast(`updating ${r.from?.slice(0,7)||''} → ${r.to}. Reconnecting…`);
+    setTimeout(()=>location.reload(), 6000);
+  }catch(e){ toast(e.message, true); }
+}
+async function systemUpdate(){
+  if(!confirm('Update OS packages? This can take several minutes and may require a reboot afterward. Avoid if VMs are running.')) return;
+  toast('updating system packages — this may take a while…');
+  try{
+    const r = await api('/api/update/system', {method:'POST'});
+    toast(r.reboot_required ? 'system updated — a reboot is required' : 'system packages updated');
+  }catch(e){ toast(e.message, true); }
+}
+
+async function delIso(name){
+  if(!confirm(`Delete ISO "${name}"?`)) return;
+  try{ await api('/api/isos/'+encodeURIComponent(name), {method:'DELETE'}); toast('ISO deleted'); refresh(); }
+  catch(e){ toast(e.message, true); }
+}
+
+function openIsoModal(){ $('#iso-overlay').classList.add('show'); $('#iso-progress').textContent=''; }
+function closeIsoModal(){ $('#iso-overlay').classList.remove('show'); $('#iso-url').value=''; $('#iso-file').value=''; }
+
+async function fetchIso(){
+  const url = $('#iso-url').value.trim();
+  if(!url){ toast('enter a URL', true); return; }
+  const btn=$('#iso-url-btn'); btn.disabled=true;
+  $('#iso-progress').textContent='downloading on the server — this can take a while for large ISOs…';
+  try{
+    const r = await api('/api/isos/fetch', {method:'POST', body:JSON.stringify({url})});
+    toast(`downloaded ${r.filename}`); closeIsoModal(); refresh();
+  }catch(e){ toast(e.message, true); $('#iso-progress').textContent=''; }
+  finally{ btn.disabled=false; }
+}
+
+function uploadIso(){
+  const f = $('#iso-file').files[0];
+  if(!f){ toast('choose a file', true); return; }
+  const btn=$('#iso-up-btn'); btn.disabled=true;
+  const fd = new FormData(); fd.append('file', f);
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/isos/upload');
+  xhr.upload.onprogress = e=>{
+    if(e.lengthComputable){
+      const pct = (100*e.loaded/e.total).toFixed(0);
+      $('#iso-progress').textContent = `uploading… ${pct}% (${(e.loaded/1e9).toFixed(2)} / ${(e.total/1e9).toFixed(2)} GB)`;
+    }
+  };
+  xhr.onload = ()=>{
+    btn.disabled=false;
+    if(xhr.status===401){ location.href='/login'; return; }
+    let d={}; try{ d=JSON.parse(xhr.responseText); }catch(_){}
+    if(xhr.status>=200 && xhr.status<300){ toast(`uploaded ${d.filename}`); closeIsoModal(); refresh(); }
+    else { toast(d.error||'upload failed', true); $('#iso-progress').textContent=''; }
+  };
+  xhr.onerror = ()=>{ btn.disabled=false; toast('upload failed', true); };
+  xhr.send(fd);
 }
 
 async function act(name, action){
@@ -300,8 +432,11 @@ async function populateModalOptions(){
       api('/api/isos'), api('/api/pools'), api('/api/networks')]);
     $('#f-iso').innerHTML = '<option value="">— none (boot from disk) —</option>' +
       isos.map(i=>`<option value="${i.path}">${i.name} (${i.size_gb} GB)</option>`).join('');
-    $('#f-pool').innerHTML = pools.filter(p=>p.active)
-      .map(p=>`<option value="${p.name}">${p.name} — ${p.available_gb} GB free</option>`).join('')
+    // Storage pools: exclude the ISO pool (disks shouldn't live there) and
+    // default-select the dedicated disks pool so VM disks never land in isos/.
+    const diskPools = pools.filter(p=>p.active && p.name !== 'freehv-isos');
+    $('#f-pool').innerHTML = (diskPools.length ? diskPools : pools.filter(p=>p.active))
+      .map(p=>`<option value="${p.name}" ${p.name==='freehv-disks'?'selected':''}>${p.name} — ${p.available_gb} GB free</option>`).join('')
       || '<option value="">(no pools)</option>';
     $('#f-net').innerHTML = nets.filter(n=>n.active)
       .map(n=>`<option value="${n.name}">${n.name} (${n.forward||'isolated'})</option>`).join('')
@@ -351,7 +486,8 @@ async function changePassword(){
 
 $('#overlay').addEventListener('click', e=>{ if(e.target.id==='overlay') closeModal(); });
 $('#pw-overlay').addEventListener('click', e=>{ if(e.target.id==='pw-overlay') closePwModal(); });
-document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal(); closePwModal(); } });
+$('#iso-overlay').addEventListener('click', e=>{ if(e.target.id==='iso-overlay') closeIsoModal(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal(); closePwModal(); closeIsoModal(); } });
 
 refresh();
 setInterval(refresh, 5000);

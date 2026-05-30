@@ -135,3 +135,25 @@ class MockBackend(Backend):
 
     def ensure_default_network(self) -> None:
         pass  # always "up" in mock
+
+    # --- ISO media management (simulated) --------------------------------
+    def iso_dir(self) -> str:
+        return "/var/lib/freehv/isos"
+
+    def fetch_iso(self, url, filename=None):
+        import os as _os
+        from urllib.parse import urlparse
+        name = filename or _os.path.basename(urlparse(url).path) or "download.iso"
+        if not name.lower().endswith(".iso"):
+            name += ".iso"
+        self._isos = getattr(self, "_isos", [])
+        self._isos.append(name)
+        return name
+
+    def delete_iso(self, filename):
+        self._isos = [i for i in getattr(self, "_isos", []) if i != filename]
+
+    def finalize_iso(self, filename):
+        self._isos = getattr(self, "_isos", [])
+        if filename not in self._isos:
+            self._isos.append(filename)
